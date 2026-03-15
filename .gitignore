@@ -1,0 +1,41 @@
+# Environment / secrets
+.env
+.env.local
+*.env.local
+
+# DB connections with real credentials
+db_connections.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+
+# Pytest
+.pytest_cache/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+
+# User / runtime data
+data/
+memory/
+reports/
+
+# Task management (project-specific)
+tasks/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
