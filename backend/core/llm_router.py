@@ -66,8 +66,31 @@ def _messages_to_single_content(msg_list: list[dict[str, str]]) -> str:
     return "\n\n".join(parts)
 
 
-def _prepare_instruction_and_context(msg_list: list[dict[str, str]]) -> tuple[str, str]:
-    """Return (instruction, context_str) for the AMAIZ payload."""
+def _prepare_instruction_and_context(
+    msg_list: list[dict[str, str]], flow_name: str | None = None
+) -> tuple[str, str]:
+    """Return (instruction, context_str) for the AMAIZ payload.
+
+    For chat flow:
+      - context_str = system prompt (schema, health, reports) → sent as context_data
+      - instruction  = FULL message blob (system + conversation) → sent as user_input
+
+    This ensures the model always receives context in user_input (works with any
+    template), and ALSO receives it in context_data (for templates that use it).
+
+    For non-chat flows: everything in instruction, context_str empty.
+    """
+    chat_flow = get_settings().AMAIZ_CHAT_FLOW_NAME
+    use_chat_split = flow_name and flow_name.strip().lower() == chat_flow.strip().lower()
+
+    if use_chat_split and len(msg_list) > 1:
+        first = msg_list[0]
+        if (first.get("role") or "").strip().lower() == "system":
+            context_str = (first.get("content") or "").strip()
+            # instruction = full blob so user_input always has context
+            instruction = _messages_to_single_content(msg_list)
+            return (instruction.strip(), context_str)
+
     if len(msg_list) == 1:
         return (msg_list[0].get("content", "").strip(), "")
     content = _messages_to_single_content(msg_list)
@@ -138,25 +161,13 @@ class LLMRouter:
             instruction or "Please analyze.",
         )
 
-    async def generate(
+    async def _generate_with_flow(
         self,
-        messages: list[dict[str, str]] | str,
-        flow_name: str | None = None,
-        **kwargs: Any,
+        instruction: str,
+        context_str: str,
+        flow_name: str | None,
     ) -> str:
-        """
-        Generate a completion via AMAIZ (non-streaming).
-
-        Retries on 409 (session-in-use), 504, and timeout by creating a fresh
-        session with exponential backoff. Circuit breaker integration.
-        """
-        msg_list = _normalize_messages(messages)
-        if not msg_list:
-            return ""
-        instruction, context_str = _prepare_instruction_and_context(msg_list)
-        if not instruction and not context_str:
-            return ""
-
+        """Run generate against a specific flow with retry logic. Raises on failure."""
         last_err: Exception | None = None
         for attempt in range(MAX_RETRIES):
             session_id = await self._ensure_session()
@@ -176,7 +187,6 @@ class LLMRouter:
                 )
 
                 if is_contention:
-                    # 409 session-in-use: session-level issue, do not count toward circuit breaker
                     logger.warning(
                         "AMAIZ 409 session-in-use (attempt %d/%d) — creating new session after backoff",
                         attempt + 1,
@@ -210,6 +220,61 @@ class LLMRouter:
         self._session_id = None
         raise last_err  # type: ignore[misc]
 
+    async def generate(
+        self,
+        messages: list[dict[str, str]] | str,
+        flow_name: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """
+        Generate a completion via AMAIZ (non-streaming).
+
+        Retries on 409 (session-in-use), 504, and timeout by creating a fresh
+        session with exponential backoff. Circuit breaker integration.
+
+        If the configured pipeline flow fails and is NOT the chat flow, falls
+        back to the chat flow automatically (handles AMAIZ flow misconfiguration).
+        """
+        msg_list = _normalize_messages(messages)
+        if not msg_list:
+            return ""
+        instruction, context_str = _prepare_instruction_and_context(msg_list, flow_name)
+        if not instruction and not context_str:
+            return ""
+
+        resolved_flow = flow_name or self._settings.AMAIZ_FLOW_NAME
+        chat_flow = self._settings.AMAIZ_CHAT_FLOW_NAME
+        is_chat = resolved_flow.strip().lower() == chat_flow.strip().lower()
+
+        try:
+            return await self._generate_with_flow(instruction, context_str, flow_name)
+        except CircuitOpenError:
+            raise
+        except Exception as primary_err:
+            if is_chat:
+                raise
+
+            logger.warning(
+                "Pipeline flow '%s' failed (%s). Falling back to chat flow '%s'.",
+                resolved_flow,
+                primary_err,
+                chat_flow,
+            )
+            self._session_id = None
+            try:
+                result = await self._generate_with_flow(
+                    instruction, context_str, chat_flow
+                )
+                logger.info(
+                    "Fallback to chat flow '%s' succeeded.", chat_flow
+                )
+                return result
+            except Exception as fallback_err:
+                logger.error(
+                    "Fallback to chat flow also failed: %s", fallback_err
+                )
+                raise primary_err from fallback_err
+
     async def generate_stream(
         self,
         messages: list[dict[str, str]] | str,
@@ -223,7 +288,7 @@ class LLMRouter:
         msg_list = _normalize_messages(messages)
         if not msg_list:
             return
-        instruction, context_str = _prepare_instruction_and_context(msg_list)
+        instruction, context_str = _prepare_instruction_and_context(msg_list, flow_name)
         if not instruction and not context_str:
             return
 

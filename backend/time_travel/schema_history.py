@@ -130,11 +130,14 @@ class SchemaHistory:
 
 
 _instance: SchemaHistory | None = None
+_init_lock = threading.Lock()
 
 
 def get_schema_history() -> SchemaHistory:
     """Return singleton SchemaHistory instance."""
     global _instance
     if _instance is None:
-        _instance = SchemaHistory()
+        with _init_lock:
+            if _instance is None:
+                _instance = SchemaHistory()
     return _instance

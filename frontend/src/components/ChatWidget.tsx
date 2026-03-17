@@ -33,11 +33,14 @@ export default function ChatWidget() {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, open]);
 
+  const genMsgId = () => Date.now() + "-" + Math.random().toString(36).substring(2, 11);
+
   const sendMessage = useCallback(
     async (text: string, attachedFiles?: File[]) => {
       if (!text.trim() && (!attachedFiles || attachedFiles.length === 0)) return;
 
       const userMsg = {
+        id: genMsgId(),
         role: "user" as const,
         content: attachedFiles && attachedFiles.length > 0
           ? `${text}\n[Attached: ${attachedFiles.map(f => f.name).join(", ")}]`
@@ -60,10 +63,10 @@ export default function ChatWidget() {
         if (attachedFiles && attachedFiles.length > 0) {
           setMessages((prev) => [
             ...prev,
-            { role: "system" as const, content: `${attachedFiles.length} report${attachedFiles.length > 1 ? "s" : ""} uploaded and parsed: ${attachedFiles.map(f => f.name).join(", ")}` },
+            { id: genMsgId(), role: "system" as const, content: `${attachedFiles.length} report${attachedFiles.length > 1 ? "s" : ""} uploaded and parsed: ${attachedFiles.map(f => f.name).join(", ")}` },
           ]);
         }
-        setMessages((prev) => [...prev, { role: "assistant" as const, content: res.reply }]);
+        setMessages((prev) => [...prev, { id: genMsgId(), role: "assistant" as const, content: res.reply }]);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Chat failed");
       } finally {
@@ -88,7 +91,7 @@ export default function ChatWidget() {
       const key = sql.trim();
       setSandboxResults((prev) => new Map(prev).set(key, { loading: true }));
       try {
-        const res = await api.sandbox({ query: sql });
+        const res = await api.sandbox({ query: sql, connection_id: activeConnectionId ?? undefined });
         if (!res.success) {
           setSandboxResults((prev) => new Map(prev).set(key, { loading: false, error: res.error || "Query failed" }));
           return;
@@ -105,13 +108,13 @@ export default function ChatWidget() {
         }));
       }
     },
-    [],
+    [activeConnectionId],
   );
 
   const handleAnalyzeQuery = useCallback(
     (sql: string) => {
       sendMessage(
-        `Analyze this SQL query:\n\`\`\`sql\n${sql}\n\`\`\``,
+        `Analyze this SQL query for performance, potential issues, and optimization opportunities:\n\`\`\`sql\n${sql}\n\`\`\``,
       );
     },
     [sendMessage],
@@ -120,7 +123,7 @@ export default function ChatWidget() {
   const handleBlastImpact = useCallback(
     (sql: string) => {
       sendMessage(
-        `What is the blast radius of this query?\n\`\`\`sql\n${sql}\n\`\`\``,
+        `What is the blast radius / impact of running this query? Analyze which tables, indexes, constraints, dependent views, triggers, and downstream services would be affected:\n\`\`\`sql\n${sql}\n\`\`\``,
       );
     },
     [sendMessage],
@@ -140,6 +143,7 @@ export default function ChatWidget() {
         onClick={() => setOpen(true)}
         className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-primary-600 hover:bg-primary-700 text-white shadow-lg flex items-center justify-center transition-all hover:scale-105"
         title="Open chat"
+        aria-label="Open chat"
       >
         <svg
           className="w-6 h-6"
@@ -177,6 +181,7 @@ export default function ChatWidget() {
           type="button"
           onClick={() => setOpen(false)}
           className="text-surface-200/50 hover:text-white transition-colors"
+          aria-label="Close chat"
         >
           <svg
             className="w-5 h-5"
@@ -204,7 +209,7 @@ export default function ChatWidget() {
 
         {messages.map((msg, i) => (
           <div
-            key={i}
+            key={msg.id ?? `msg-${i}`}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             {msg.role === "user" ? (
@@ -277,6 +282,7 @@ export default function ChatWidget() {
             className="flex-shrink-0 p-1.5 rounded bg-surface-800 hover:bg-surface-700 text-surface-200 transition-colors"
             onClick={() => fileRef.current?.click()}
             title="Upload report"
+            aria-label="Upload report"
           >
             <svg
               className="w-4 h-4"
@@ -298,6 +304,7 @@ export default function ChatWidget() {
             accept=".html,.htm"
             multiple
             className="hidden"
+            aria-label="Upload HTML report files"
             onChange={(e) => {
               const newFiles = e.target.files;
               if (newFiles && newFiles.length > 0) {
@@ -309,6 +316,7 @@ export default function ChatWidget() {
             type="text"
             className="input-field flex-1 text-sm py-1.5"
             placeholder="Ask something..."
+            aria-label="Chat message input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}

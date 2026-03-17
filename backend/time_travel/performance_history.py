@@ -76,11 +76,14 @@ class PerformanceHistory:
 
 
 _instance: PerformanceHistory | None = None
+_init_lock = threading.Lock()
 
 
 def get_performance_history() -> PerformanceHistory:
     """Return singleton PerformanceHistory instance."""
     global _instance
     if _instance is None:
-        _instance = PerformanceHistory()
+        with _init_lock:
+            if _instance is None:
+                _instance = PerformanceHistory()
     return _instance

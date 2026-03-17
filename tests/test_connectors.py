@@ -33,6 +33,13 @@ class TestIsDangerousQuery:
     def test_safe_explain(self):
         assert is_dangerous_query("EXPLAIN SELECT * FROM users") is False
 
+    def test_dangerous_prepare_execute(self):
+        assert is_dangerous_query("PREPARE stmt AS INSERT INTO t VALUES (1)") is True
+        assert is_dangerous_query("EXECUTE stmt") is True
+
+    def test_dangerous_select_into(self):
+        assert is_dangerous_query("SELECT * INTO new_table FROM users") is True
+
 
 class TestConnectionResult:
     """Tests for ConnectionResult."""

@@ -87,8 +87,8 @@ class MonitoringScheduler:
         all_health: dict[str, dict[str, Any]] = {}
 
         try:
-            from backend.api.routes import _active_connections
-            for conn_id, info in list(_active_connections.items()):
+            from backend.core.connection_manager import get_active_connections_snapshot
+            for conn_id, info in get_active_connections_snapshot().items():
                 connector = info.get("connector")
                 engine = info.get("engine")
                 if not connector:

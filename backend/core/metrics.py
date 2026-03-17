@@ -29,18 +29,27 @@ _pipeline_counts: DefaultDict[str, DefaultDict[bool, int]] = collections.default
 _pipeline_durations: DefaultDict[str, list[float]] = collections.defaultdict(list)
 
 
+_MAX_DURATION_SAMPLES = 1000
+
+
 def record_request(path: str, status_code: int, duration_s: float) -> None:
     """Record an HTTP request metric."""
     with _lock:
         _request_counts[path][status_code] += 1
-        _request_durations[path].append(duration_s)
+        durs = _request_durations[path]
+        durs.append(duration_s)
+        if len(durs) > _MAX_DURATION_SAMPLES:
+            _request_durations[path] = durs[-_MAX_DURATION_SAMPLES:]
 
 
 def record_pipeline_run(run_type: str, duration_s: float, success: bool) -> None:
     """Record a pipeline run metric."""
     with _lock:
         _pipeline_counts[run_type][success] += 1
-        _pipeline_durations[run_type].append(duration_s)
+        durs = _pipeline_durations[run_type]
+        durs.append(duration_s)
+        if len(durs) > _MAX_DURATION_SAMPLES:
+            _pipeline_durations[run_type] = durs[-_MAX_DURATION_SAMPLES:]
 
 
 def _format_label_value(v: str) -> str:

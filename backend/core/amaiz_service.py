@@ -194,7 +194,24 @@ class AmaizService:
                 logger.error("AMAIZ error: %s", error_message)
                 raise RuntimeError(f"AMAIZ execution error: {error_message}")
             raise RuntimeError("AMAIZ returned no message and no error details")
-        return llm_answer.response.message.message or ""
+        return AmaizService._message_to_string(llm_answer.response.message)
+
+    @staticmethod
+    def _message_to_string(msg: Any) -> str:
+        """Normalize AMAIZ response.message to a string (handles dict or object with .message).
+        Never returns str(object) which would show repr-style ('message': '...') in the UI."""
+        if msg is None:
+            return ""
+        if isinstance(msg, str):
+            return msg
+        if isinstance(msg, dict):
+            inner = msg.get("message", "")
+            return AmaizService._message_to_string(inner) if inner != "" else ""
+        # Object: unwrap .message until we get a string or dict (avoid str(object) repr)
+        inner = getattr(msg, "message", None)
+        if inner is not None:
+            return AmaizService._message_to_string(inner)
+        return ""
 
     @staticmethod
     def _extract_message_from_validation_error(ve: ValidationError) -> str:
@@ -202,10 +219,11 @@ class AmaizService:
         try:
             raw = ve.errors()[0].get("input") if ve.errors() else None
             if isinstance(raw, dict):
-                msg = raw.get("response", {}).get("message", {}).get("message", "")
+                inner = raw.get("response", {}).get("message")
+                msg = AmaizService._message_to_string(inner) if inner is not None else ""
                 if msg:
                     logger.info("Recovered LLM message (%d chars) from raw response", len(msg))
-                    return str(msg)
+                    return msg
         except Exception:
             pass
 
@@ -213,9 +231,10 @@ class AmaizService:
             ctx = ve.errors()[0].get("ctx", {}) if ve.errors() else {}
             raw_input = ctx.get("input")
             if isinstance(raw_input, dict):
-                msg = raw_input.get("response", {}).get("message", {}).get("message", "")
+                inner = raw_input.get("response", {}).get("message")
+                msg = AmaizService._message_to_string(inner) if inner is not None else ""
                 if msg:
-                    return str(msg)
+                    return msg
         except Exception:
             pass
 

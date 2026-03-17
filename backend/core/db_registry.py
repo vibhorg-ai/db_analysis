@@ -254,22 +254,21 @@ class DBRegistry:
             settings = get_settings()
             custom_path = _V5_ROOT / settings.data_dir / "custom_connections.yaml"
 
-        out = {"connections": entries}
-        fd, tmp_path = tempfile.mkstemp(suffix=".yaml", dir=str(custom_path.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                yaml.dump(out, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-            os.replace(tmp_path, custom_path)
-        except Exception:
+            out = {"connections": entries}
+            fd, tmp_path = tempfile.mkstemp(suffix=".yaml", dir=str(custom_path.parent))
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    yaml.dump(out, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                os.replace(tmp_path, custom_path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
-        with self._lock:
             self._reload()
-        return True
+            return True
 
 
 _registry_instance: DBRegistry | None = None

@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     llm_max_context_tokens: int = 16000
 
     # Pipeline
-    pipeline_stage_timeout: int = 120
+    pipeline_stage_timeout: int = 90
     pipeline_max_concurrency: int = 5
 
     # Circuit breaker (AMAIZ)

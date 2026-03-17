@@ -5,8 +5,10 @@ Uses acouchbase AsyncCluster for async Couchbase access.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import selectors
 from datetime import timedelta
 from typing import Any
 
@@ -21,6 +23,45 @@ DEFAULT_WAIT_UNTIL_READY_TIMEOUT = 10
 DEFAULT_CONNECT_TIMEOUT = 10
 DEFAULT_QUERY_TIMEOUT = 30
 DEFAULT_MANAGEMENT_TIMEOUT = 30
+
+_loop_patched = False
+
+
+def _patch_acouchbase_event_loop() -> None:
+    """Patch acouchbase LoopValidator so it never closes a running event loop.
+
+    On Windows, uvicorn uses ProactorEventLoop which lacks add_reader/remove_reader.
+    The SDK's LoopValidator tries to close it and create a SelectorEventLoop,
+    but closing a running loop raises RuntimeError. We override _get_working_loop
+    to create a new SelectorEventLoop without closing the running one.
+    """
+    global _loop_patched
+    if _loop_patched:
+        return
+    try:
+        from acouchbase import LoopValidator
+
+        original = LoopValidator._get_working_loop
+
+        @staticmethod  # type: ignore[misc]
+        def _safe_get_working_loop():
+            try:
+                evloop = asyncio.get_event_loop()
+            except RuntimeError:
+                evloop = None
+
+            if evloop and LoopValidator._is_valid_loop(evloop):
+                return evloop
+
+            selector = selectors.SelectSelector()
+            new_loop = asyncio.SelectorEventLoop(selector)
+            return new_loop
+
+        LoopValidator._get_working_loop = _safe_get_working_loop
+        _loop_patched = True
+        logger.debug("Patched acouchbase LoopValidator for running event loop compatibility")
+    except (ImportError, AttributeError):
+        pass
 
 
 def _normalize_conn_string(raw: str) -> str:
@@ -124,6 +165,8 @@ class CouchbaseConnector:
             )
 
         try:
+            _patch_acouchbase_event_loop()
+
             from acouchbase.cluster import AsyncCluster
             from couchbase.auth import PasswordAuthenticator
             from couchbase.options import ClusterOptions, ClusterTimeoutOptions
@@ -135,7 +178,9 @@ class CouchbaseConnector:
                 management_timeout=timedelta(seconds=self._management_timeout),
             )
             opts = ClusterOptions(auth, timeout_options=timeout_opts)
-            self._cluster = await AsyncCluster.connect(conn_str, opts)
+
+            loop = asyncio.get_running_loop()
+            self._cluster = await AsyncCluster.connect(conn_str, opts, loop=loop)
 
             await self._cluster.wait_until_ready(
                 timedelta(seconds=self._wait_until_ready_timeout)
@@ -192,6 +237,11 @@ class CouchbaseConnector:
         if self._cluster:
             try:
                 await self._cluster.close()
+            except RuntimeError as e:
+                if "event loop" in str(e).lower():
+                    logger.debug("Ignoring event loop error during Couchbase disconnect: %s", e)
+                else:
+                    logger.warning("Error closing Couchbase cluster: %s", e)
             except Exception as e:
                 logger.warning("Error closing Couchbase cluster: %s", e)
             finally:
@@ -261,8 +311,12 @@ class CouchbaseConnector:
         opts = QueryOptions(timeout=timedelta(seconds=self._query_timeout))
         result = self._cluster.query(query, opts, *args, **kwargs)
 
+        max_rows = 50_000
         rows: list[dict[str, Any]] = []
         async for row in result.rows():
+            if len(rows) >= max_rows:
+                logger.warning("Couchbase execute_read_only capped at %d rows", max_rows)
+                break
             if hasattr(row, "keys"):
                 rows.append(dict(row))
             elif isinstance(row, dict):

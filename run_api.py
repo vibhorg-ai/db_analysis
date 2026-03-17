@@ -11,4 +11,5 @@ if __name__ == "__main__":
         host=s.app_host,
         port=s.app_port,
         reload=(s.environment == "dev"),
+        reload_dirs=["backend"] if s.environment == "dev" else None,
     )

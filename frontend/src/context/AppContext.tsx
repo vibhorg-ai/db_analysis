@@ -1,10 +1,12 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { api } from "../api/client.ts";
 
 export interface Connection {
   id: string;
   name: string;
   engine: string;
   default: boolean;
+  connected?: boolean;
 }
 
 export interface DBHealthResponse {
@@ -38,6 +40,7 @@ export interface Issue {
 }
 
 export interface ChatMessage {
+  id: string;
   role: "user" | "assistant" | "system";
   content: string;
 }
@@ -56,10 +59,10 @@ interface AppContextType {
   connections: Connection[];
   activeConnectionId: string | null;
   setActiveConnectionId: (id: string | null) => void;
-  refreshConnections: () => Promise<void>;
+  refreshConnections: (force?: boolean) => Promise<void>;
   healthMap: Record<string, DBHealthResponse>;
   setHealthForConnection: (connId: string, health: DBHealthResponse) => void;
-  refreshHealthAll: () => Promise<void>;
+  refreshHealthAll: (force?: boolean) => Promise<void>;
   schemaMap: Record<string, TableMeta[]>;
   setSchemaForConnection: (connId: string, tables: TableMeta[]) => void;
   fetchSchemaIfNeeded: (connId: string) => Promise<TableMeta[]>;
@@ -89,39 +92,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
   const [chatContextSummary, setChatContextSummary] = useState<ChatContextSummary | null>(null);
 
-  const refreshConnections = useCallback(async () => {
-    const res = await fetch("/api/connections");
-    if (!res.ok) throw new Error(`Failed to fetch connections: ${res.status}`);
-    const data = await res.json();
-    setConnections(data);
+  const STALE_MS = 30_000;
+  const lastFetchRef = useRef<Record<string, number>>({});
+  /** Backend instance_id; when it changes (restart), we clear stale chat state. */
+  const lastBackendInstanceIdRef = useRef<string | null>(null);
+
+  const isStale = useCallback((key: string) => {
+    const last = lastFetchRef.current[key] ?? 0;
+    return Date.now() - last > STALE_MS;
   }, []);
+
+  const markFetched = useCallback((key: string) => {
+    lastFetchRef.current[key] = Date.now();
+  }, []);
+
+  const refreshConnections = useCallback(async (force?: boolean) => {
+    if (!force && !isStale("connections")) return;
+    try {
+      const res = await fetch("/api/connections");
+      if (!res.ok) throw new Error(`Failed to fetch connections: ${res.status}`);
+      const data: Connection[] = await res.json();
+      setConnections(data);
+      markFetched("connections");
+
+      // Auto-set activeConnectionId: if none set, pick first connected; if current is gone, clear.
+      setActiveConnectionId((prev) => {
+        if (prev && data.some((c) => c.id === prev)) return prev;
+        const firstConnected = data.find((c) => c.connected);
+        return firstConnected?.id ?? data[0]?.id ?? null;
+      });
+    } catch (e) {
+      if ((e as Error)?.message?.includes("429")) return;
+      console.warn("Connections fetch failed, using empty list", e);
+      setConnections([]);
+      markFetched("connections");
+    }
+  }, [isStale, markFetched]);
 
   const setHealthForConnection = useCallback((connId: string, health: DBHealthResponse) => {
     setHealthMap((prev) => ({ ...prev, [connId]: health }));
   }, []);
 
-  const refreshHealthAll = useCallback(async () => {
+  const refreshHealthAll = useCallback(async (force?: boolean) => {
+    if (!force && !isStale("health")) return;
     try {
-      const res = await fetch("/api/connections");
-      if (!res.ok) return;
-      const conns: Connection[] = await res.json();
+      const allRes = await fetch("/api/db-health/all");
+      if (!allRes.ok) return;
+      const allData = await allRes.json();
+      const conns = (allData.connections ?? allData) as Record<string, DBHealthResponse>;
       const next: Record<string, DBHealthResponse> = {};
-      for (const c of conns) {
-        try {
-          const hRes = await fetch(`/api/db-health?connection_id=${encodeURIComponent(c.id)}`);
-          if (hRes.ok) {
-            const h = await hRes.json();
-            next[c.id] = { ...h, connection_id: c.id };
-          }
-        } catch {
-          /* ignore */
-        }
+      for (const [connId, h] of Object.entries(conns)) {
+        next[connId] = { ...h, connection_id: connId };
       }
       setHealthMap((prev) => ({ ...prev, ...next }));
+      markFetched("health");
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [isStale, markFetched]);
 
   const setSchemaForConnection = useCallback((connId: string, tables: TableMeta[]) => {
     setSchemaMap((prev) => ({ ...prev, [connId]: tables }));
@@ -132,7 +160,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const cached = schemaMap[connId];
       if (cached) return cached;
       const res = await fetch(`/api/schema?connection_id=${encodeURIComponent(connId)}`);
-      if (!res.ok) throw new Error(`Failed to fetch schema: ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 400) {
+          setSchemaMap((prev) => ({ ...prev, [connId]: [] }));
+          return [];
+        }
+        throw new Error(`Failed to fetch schema: ${res.status}`);
+      }
       const data = await res.json();
       const tables = data.tables ?? data;
       setSchemaMap((prev) => ({ ...prev, [connId]: tables }));
@@ -156,16 +190,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshIssues = useCallback(async () => {
+    if (!isStale("issues")) return;
     try {
       const res = await fetch("/api/issues");
       if (!res.ok) return;
       const data = await res.json();
       const list = Array.isArray(data) ? data : data.issues ?? data.items ?? [];
       setIssues(list);
+      markFetched("issues");
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [isStale, markFetched]);
 
   useEffect(() => {
     refreshConnections();
@@ -173,28 +209,94 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshIssues().catch(() => {});
   }, [refreshConnections, refreshHealthAll, refreshIssues]);
 
-  const value: AppContextType = {
-    connections,
-    activeConnectionId,
-    setActiveConnectionId,
-    refreshConnections,
-    healthMap,
-    setHealthForConnection,
-    refreshHealthAll,
-    schemaMap,
-    setSchemaForConnection,
-    fetchSchemaIfNeeded,
-    issues,
-    addIssues,
-    resolveIssue,
-    refreshIssues,
-    chatMessages,
-    setChatMessages,
-    chatSessionId,
-    setChatSessionId,
-    chatContextSummary,
-    setChatContextSummary,
-  };
+  // Validate persisted chat session on load and clear if backend restarted (sessions are in-memory).
+  useEffect(() => {
+    const sid = localStorage.getItem("chat_session_id");
+    if (!sid) return;
+    api
+      .validateChatSession(sid)
+      .then((result) => {
+        if (result === null) {
+          localStorage.removeItem("chat_session_id");
+          setChatSessionId(null);
+          setChatMessages([]);
+          setChatContextSummary(null);
+        } else {
+          setChatContextSummary(result.context_summary);
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem("chat_session_id");
+        setChatSessionId(null);
+        setChatMessages([]);
+        setChatContextSummary(null);
+      });
+  }, []);
+
+  // Detect backend restart (instance_id change) and clear chat state so we don't show stale data.
+  useEffect(() => {
+    const checkBackendInstance = async () => {
+      try {
+        const h = await api.getHealth();
+        const prev = lastBackendInstanceIdRef.current;
+        if (prev != null && prev !== h.instance_id) {
+          localStorage.removeItem("chat_session_id");
+          setChatSessionId(null);
+          setChatMessages([]);
+          setChatContextSummary(null);
+        }
+        lastBackendInstanceIdRef.current = h.instance_id;
+      } catch {
+        /* ignore */
+      }
+    };
+    checkBackendInstance();
+    const interval = setInterval(checkBackendInstance, 25_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const value = useMemo<AppContextType>(
+    () => ({
+      connections,
+      activeConnectionId,
+      setActiveConnectionId,
+      refreshConnections,
+      healthMap,
+      setHealthForConnection,
+      refreshHealthAll,
+      schemaMap,
+      setSchemaForConnection,
+      fetchSchemaIfNeeded,
+      issues,
+      addIssues,
+      resolveIssue,
+      refreshIssues,
+      chatMessages,
+      setChatMessages,
+      chatSessionId,
+      setChatSessionId,
+      chatContextSummary,
+      setChatContextSummary,
+    }),
+    [
+      connections,
+      activeConnectionId,
+      refreshConnections,
+      healthMap,
+      setHealthForConnection,
+      refreshHealthAll,
+      schemaMap,
+      setSchemaForConnection,
+      fetchSchemaIfNeeded,
+      issues,
+      addIssues,
+      resolveIssue,
+      refreshIssues,
+      chatMessages,
+      chatSessionId,
+      chatContextSummary,
+    ]
+  );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

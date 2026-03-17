@@ -1,5 +1,10 @@
 """
 Coordinates which agents run for which request type.
+
+AMAIZ sessions do NOT support concurrent requests — a second call to the same
+session returns 409 "session is in use".  Therefore each agent in a parallel
+batch receives its own LLMRouter (and hence its own AMAIZ session).
+Sequential stages can safely share one.
 """
 
 from __future__ import annotations
@@ -17,12 +22,8 @@ from backend.core.llm_router import LLMRouter
 logger = logging.getLogger(__name__)
 
 FULL_PIPELINE_BATCHES = [
-    ["schema_intelligence"],
-    ["workload_intelligence"],
-    ["query_analysis"],
-    ["optimizer"],
-    ["index_advisor"],
-    ["blast_radius"],
+    ["schema_intelligence", "workload_intelligence", "query_analysis"],
+    ["optimizer", "index_advisor", "blast_radius"],
     ["self_critic"],
     ["learning_agent"],
 ]
@@ -64,7 +65,11 @@ class AgentOrchestrator:
         stages_or_batches: list,
         stage_timeout_sec: int | None = None,
     ) -> dict:
-        """Run agents according to stages_or_batches. Returns updated context with _timing and _pipeline_run_id."""
+        """Run agents according to stages_or_batches.
+
+        Returns updated context with _timing (values in **milliseconds**)
+        and _pipeline_run_id.
+        """
         context: dict[str, Any] = dict(initial_context)
         timeout = stage_timeout_sec or self._settings.pipeline_stage_timeout
         run_id = str(uuid.uuid4())
@@ -87,29 +92,31 @@ class AgentOrchestrator:
                 except Exception as e:
                     logger.exception("Stage %s failed: %s", stage_name, e)
                     context[stage_name] = {"error": str(e), "status": "failed"}
-                elapsed = time.perf_counter() - start
-                timing[stage_name] = elapsed
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                timing[stage_name] = elapsed_ms
             else:
-                start = time.perf_counter()
-                async def run_stage(name: str) -> tuple[str, dict]:
+                # Parallel batch: each agent gets its own LLMRouter to avoid
+                # AMAIZ 409 "session is in use" contention.
+                async def run_stage(stage_name: str, llm: LLMRouter) -> tuple[str, dict, float]:
+                    t0 = time.perf_counter()
                     try:
-                        agent = self._agent_router.get_agent(name, self._llm_router)
-                        result = await asyncio.wait_for(agent.run(context), timeout=timeout)
-                        return (name, result)
+                        agent = self._agent_router.get_agent(stage_name, llm)
+                        res = await asyncio.wait_for(agent.run(context), timeout=timeout)
+                        return (stage_name, res, (time.perf_counter() - t0) * 1000)
                     except asyncio.TimeoutError:
-                        logger.warning("Stage %s timed out after %ds", name, timeout)
-                        return (name, {"error": "timeout", "status": "failed"})
+                        logger.warning("Stage %s timed out after %ds", stage_name, timeout)
+                        return (stage_name, {"error": "timeout", "status": "failed"}, (time.perf_counter() - t0) * 1000)
                     except Exception as e:
-                        logger.exception("Stage %s failed: %s", name, e)
-                        return (name, {"error": str(e), "status": "failed"})
+                        logger.exception("Stage %s failed: %s", stage_name, e)
+                        return (stage_name, {"error": str(e), "status": "failed"}, (time.perf_counter() - t0) * 1000)
 
-                tasks = [run_stage(name) for name in batch]
-                results = await asyncio.gather(*tasks)
-                for name, result in results:
+                logger.info("Running parallel batch %s — spawning %d independent LLM sessions",
+                            batch, len(batch))
+                tasks = [run_stage(name, LLMRouter()) for name in batch]
+                batch_results = await asyncio.gather(*tasks)
+                for name, result, elapsed_ms in batch_results:
                     context[name] = result
-                elapsed = time.perf_counter() - start
-                for name in batch:
-                    timing[name] = elapsed / len(batch)  # approximate per-stage share
+                    timing[name] = elapsed_ms
 
         context["_timing"] = timing
         return context

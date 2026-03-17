@@ -1,0 +1,13 @@
+{
+  "title": "ChatResponse",
+  "required": [
+    "message"
+  ],
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string",
+      "description": "The assistant response"
+    }
+  }
+}

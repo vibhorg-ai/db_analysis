@@ -15,14 +15,23 @@ __pycache__/
 .venv/
 venv/
 env/
+build/
 
 # Pytest
 .pytest_cache/
+coverage/
+htmlcov/
 
 # Frontend build artifacts
 frontend/node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+.cache/
+
+# E2E test artifacts
+tests/e2e/node_modules/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
 
 # User / runtime data
 data/
@@ -31,6 +40,10 @@ reports/
 
 # Task management (project-specific)
 tasks/
+
+# Logs
+logs/
+*.log
 
 # OS files
 .DS_Store

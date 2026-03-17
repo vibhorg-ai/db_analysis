@@ -17,7 +17,7 @@ class ConnectDBRequest(BaseModel):
     connection_id: str | None = None
     dsn: str | None = None
     host: str | None = None
-    port: int | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
     database: str | None = None
     user: str | None = None
     password: str | None = None
@@ -37,7 +37,7 @@ class ConnectDBResponse(BaseModel):
 
 
 class AnalyzeQueryRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1)
     connection_id: str | None = None
     mode: str = "full"  # "full", "query_only", "index_only"
 
@@ -70,11 +70,6 @@ class DBHealthResponse(BaseModel):
 # --- Chat ---
 
 
-class ChatRequest(BaseModel):
-    message: str
-    session_id: str | None = None
-
-
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
@@ -92,7 +87,7 @@ class IndexRecommendationsResponse(BaseModel):
 
 
 class SandboxQueryRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1)
     connection_id: str | None = None
 
 
@@ -139,6 +134,56 @@ class AllDBHealthResponse(BaseModel):
     connections: dict[str, DBHealthResponse] = {}
 
 
+# --- Insights (Autonomous Advisor) ---
+
+
+class InsightResponse(BaseModel):
+    id: str
+    timestamp: float
+    category: str = "performance"
+    title: str = ""
+    description: str = ""
+    recommendation: str = ""
+    suggested_sql: str | None = None
+    impact: str = "medium"
+    confidence: float = 0.0
+    risk: str = "low"
+    connection_id: str = ""
+    source: str = "advisor"
+    dismissed: bool = False
+    dismissed_at: float | None = None
+
+
+class InsightDismissResponse(BaseModel):
+    success: bool
+    message: str
+
+
+# --- Simulation Engine ---
+
+
+class SimulateRequest(BaseModel):
+    change_type: str  # add_index, remove_index, drop_column, partition_table, query_comparison, growth, dependency_impact
+    connection_id: str | None = None
+    table: str = Field(default="", max_length=512)
+    column: str = Field(default="", max_length=512)
+    columns: list[str] = []
+    index_name: str = Field(default="", max_length=512)
+    partition_column: str = Field(default="", max_length=512)
+    target_rows: int = Field(default=0, ge=0, le=100_000_000_000)
+    original_query: str = ""
+    optimized_query: str = ""
+
+
+class SimulateResponse(BaseModel):
+    id: str
+    simulation_type: str
+    input_description: str
+    result: dict[str, Any] = {}
+    connection_id: str = ""
+    timestamp: float = 0.0
+
+
 # --- Connection registry ---
 
 
@@ -161,3 +206,4 @@ class DBConnectionItem(BaseModel):
     name: str
     engine: str
     default: bool = False
+    connected: bool = False

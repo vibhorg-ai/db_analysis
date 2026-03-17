@@ -62,11 +62,14 @@ class QueryHistory:
 
 
 _instance: QueryHistory | None = None
+_init_lock = threading.Lock()
 
 
 def get_query_history() -> QueryHistory:
     """Return singleton QueryHistory instance."""
     global _instance
     if _instance is None:
-        _instance = QueryHistory()
+        with _init_lock:
+            if _instance is None:
+                _instance = QueryHistory()
     return _instance

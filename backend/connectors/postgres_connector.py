@@ -171,6 +171,7 @@ class PostgresConnector:
                     "columns": [],
                     "primary_key": None,
                     "foreign_keys": [],
+                    "indexes": [],
                 })
 
             table_key: dict[tuple[str, str], int] = {}
@@ -246,6 +247,34 @@ class PostgresConnector:
                         "ref_column": fk["ref_column"],
                         "relationship_type": "one_to_many",
                     })
+
+            # Indexes (including PK-backed indexes) with column order
+            idx_rows = await self._conn.fetch("""
+                SELECT
+                    n.nspname AS schema_name,
+                    t.relname AS table_name,
+                    i.relname AS index_name,
+                    array_agg(a.attname ORDER BY k.ord) FILTER (WHERE a.attname IS NOT NULL) AS columns
+                FROM pg_index ix
+                JOIN pg_class t ON t.oid = ix.indrelid
+                JOIN pg_class i ON i.oid = ix.indexrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+                CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+                LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                    AND a.attnum > 0 AND NOT a.attisdropped
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                GROUP BY n.nspname, t.relname, i.relname
+            """)
+            for idx in idx_rows:
+                key = (idx["schema_name"], idx["table_name"])
+                if key not in table_key:
+                    continue
+                columns = list(idx["columns"] or [])
+                tables[table_key[key]].setdefault("indexes", []).append({
+                    "name": idx["index_name"],
+                    "index_name": idx["index_name"],
+                    "columns": columns,
+                })
 
             return tables
 

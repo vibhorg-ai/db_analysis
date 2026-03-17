@@ -5,17 +5,26 @@ All DB access goes through this layer. MCP or direct implementations.
 
 from typing import Any, Protocol, runtime_checkable
 
-_DANGEROUS_KEYWORDS = frozenset(
-    {"DROP", "DELETE", "TRUNCATE", "ALTER", "CREATE", "INSERT", "UPDATE", "REPLACE"}
-)
+_DANGEROUS_KEYWORDS = frozenset({
+    "DROP", "DELETE", "TRUNCATE", "ALTER", "CREATE", "INSERT", "UPDATE",
+    "REPLACE", "COPY", "GRANT", "REVOKE", "CALL", "REINDEX", "MERGE",
+    "PREPARE", "EXECUTE", "INTO",  # PREPARE/EXECUTE can run arbitrary SQL; SELECT INTO writes
+})
 
 
 def is_dangerous_query(text: str) -> bool:
     """True if the query appears to contain a dangerous DDL/DML keyword."""
-    upper = text.strip().upper()
-    for kw in _DANGEROUS_KEYWORDS:
-        if upper.startswith(kw) or f" {kw} " in f" {upper} ":
-            return True
+    import re
+    cleaned = re.sub(r"--[^\n]*", " ", text)
+    cleaned = re.sub(r"/\*.*?\*/", " ", cleaned, flags=re.DOTALL)
+    for statement in cleaned.split(";"):
+        upper = statement.strip().upper()
+        if not upper:
+            continue
+        padded = f" {upper} "
+        for kw in _DANGEROUS_KEYWORDS:
+            if upper.startswith(kw) or f" {kw} " in padded:
+                return True
     return False
 
 

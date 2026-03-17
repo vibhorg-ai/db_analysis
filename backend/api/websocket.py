@@ -79,7 +79,30 @@ manager = ConnectionManager()
 
 
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """FastAPI WebSocket endpoint handler."""
+    """FastAPI WebSocket endpoint handler. Requires API key or Keycloak JWT when configured."""
+    from backend.core.config import get_settings
+
+    settings = get_settings()
+    if settings.keycloak_server_url:
+        auth_header = websocket.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            await websocket.close(code=4003, reason="Keycloak auth required: send Authorization Bearer <token>")
+            return
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            from backend.core.auth import _decode_keycloak_token
+            _decode_keycloak_token(token)
+        except Exception:
+            await websocket.close(code=4003, reason="Invalid or expired token")
+            return
+    elif settings.api_key:
+        api_key = websocket.query_params.get("api_key", "")
+        if not api_key:
+            api_key = websocket.headers.get("x-api-key", "")
+        if not api_key or api_key != settings.api_key:
+            await websocket.close(code=4003, reason="Unauthorized")
+            return
+
     await manager.connect(websocket)
     try:
         while True:
@@ -122,3 +145,8 @@ async def notify_connection_change(connection_data: dict[str, Any]) -> None:
 
 async def notify_monitoring_complete(run_data: dict[str, Any]) -> None:
     await manager.broadcast(WS_MONITORING_COMPLETE, run_data)
+
+
+async def notify_event(event_type: str, data: dict[str, Any]) -> None:
+    """Generic event broadcaster for any event type."""
+    await manager.broadcast(event_type, data)

@@ -61,58 +61,6 @@ def get_mcp_couchbase_config() -> dict[str, Any]:
     }
 
 
-def sync_connections_to_mcp(connections: list[dict[str, Any]]) -> None:
-    """
-    Take list of connection dicts, find first postgres and first couchbase,
-    build MCP config from them and store as synced state.
-    """
-    global _synced_postgres, _synced_couchbase
-
-    postgres_conn: dict[str, Any] | None = None
-    couchbase_conn: dict[str, Any] | None = None
-
-    for c in connections:
-        engine = (c.get("engine") or "").lower()
-        if engine == "postgres" and postgres_conn is None:
-            postgres_conn = c
-        elif engine == "couchbase" and couchbase_conn is None:
-            couchbase_conn = c
-        if postgres_conn and couchbase_conn:
-            break
-
-    with _sync_lock:
-        if postgres_conn is not None:
-            _synced_postgres = {
-                "dsn": postgres_conn.get("dsn") or _build_postgres_dsn(postgres_conn),
-                "configured": True,
-            }
-        else:
-            _synced_postgres = None
-
-        if couchbase_conn is not None:
-            _synced_couchbase = {
-                "connection_string": couchbase_conn.get("connection_string", ""),
-                "bucket": couchbase_conn.get("bucket", ""),
-                "username": couchbase_conn.get("username", ""),
-                "password": couchbase_conn.get("password", ""),
-                "configured": True,
-            }
-        else:
-            _synced_couchbase = None
-
-
-def _build_postgres_dsn(conn: dict[str, Any]) -> str:
-    """Build postgresql DSN from connection dict."""
-    from urllib.parse import quote_plus
-
-    host = conn.get("host") or "localhost"
-    port = conn.get("port") or 5432
-    database = conn.get("database") or ""
-    user = quote_plus(conn.get("user") or "")
-    password = quote_plus(conn.get("password") or "")
-    return f"postgresql://{user}:{password}@{host}:{port}/{database}"
-
-
 def get_mcp_status() -> dict[str, Any]:
     """Return dict with postgres and couchbase configured status."""
     pg = get_mcp_postgres_config()

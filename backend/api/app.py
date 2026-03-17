@@ -5,6 +5,7 @@ Serves API and WebSocket; Keycloak optional. No code from v3/v4.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -128,8 +129,56 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class RateLimitMiddleware:
+    """ASGI middleware: 100 requests per 60s per IP, returns 429 when exceeded. Skips /health/live."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        rate_limiter: SlidingWindowRateLimiter,
+        max_requests: int = 100,
+        window_seconds: float = 60.0,
+    ) -> None:
+        self.app = app
+        self.rate_limiter = rate_limiter
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+
+    def _client_ip(self, scope: Scope) -> str:
+        if scope["type"] != "http":
+            return "unknown"
+        client = scope.get("client")
+        if client:
+            return str(client[0])
+        headers = dict(scope.get("headers", []))
+        forwarded = headers.get(b"x-forwarded-for") or headers.get(b"X-Forwarded-For")
+        if forwarded:
+            return forwarded.decode().split(",")[0].strip()
+        return "unknown"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path == "/health/live":
+            await self.app(scope, receive, send)
+            return
+        ip = self._client_ip(scope)
+        if not self.rate_limiter.is_allowed(ip, self.max_requests, self.window_seconds):
+            response = Response(
+                content='{"detail":"Too Many Requests"}',
+                status_code=429,
+                media_type="application/json",
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 class BodySizeLimitMiddleware:
-    """ASGI middleware that rejects requests with Content-Length exceeding the limit."""
+    """ASGI middleware that rejects oversized request bodies.
+    Handles both Content-Length header and chunked/streaming bodies."""
 
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
         self.app = app
@@ -155,7 +204,32 @@ class BodySizeLimitMiddleware:
                     return
             except ValueError:
                 pass
-        await self.app(scope, receive, send)
+
+        total_read = 0
+        max_bytes = self.max_bytes
+
+        async def size_limited_receive() -> dict:
+            nonlocal total_read
+            message = await receive()
+            if message.get("type") == "http.request":
+                body = message.get("body", b"")
+                total_read += len(body)
+                if total_read > max_bytes:
+                    raise ValueError("Request entity too large")
+            return message
+
+        try:
+            await self.app(scope, size_limited_receive, send)
+        except ValueError as exc:
+            if "too large" in str(exc):
+                response = Response(
+                    content='{"detail":"Request entity too large"}',
+                    status_code=413,
+                    media_type="application/json",
+                )
+                await response(scope, receive, send)
+            else:
+                raise
 
 
 # --- Lifespan ---
@@ -163,6 +237,9 @@ class BodySizeLimitMiddleware:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from backend.core.instance_id import set_instance_id
+    set_instance_id(str(uuid.uuid4()))
+
     settings = get_settings()
     # Set HTTPX_REQUEST_TIMEOUT env var from config
     os.environ["HTTPX_REQUEST_TIMEOUT"] = str(settings.HTTPX_REQUEST_TIMEOUT)
@@ -196,8 +273,15 @@ async def lifespan(app: FastAPI):
     scheduler = get_monitoring_scheduler()
     await scheduler.start()
 
+    # Start advisor scheduler
+    from backend.scheduler.advisor_job import get_advisor_scheduler
+
+    advisor = get_advisor_scheduler()
+    await advisor.start()
+
     yield
 
+    await advisor.stop()
     await scheduler.stop()
     logger.info("Shutdown")
 
@@ -217,12 +301,19 @@ def create_app() -> FastAPI:
     )
 
     # Middleware order: last added = first to receive request (inner to outer)
-    # Request flow: CORS -> BodySizeLimit -> APIKey -> RequestLogging -> routes
+    # Request flow: RateLimit -> CORS -> BodySizeLimit -> APIKey -> RequestLogging -> routes
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(APIKeyAuthMiddleware, api_key=settings.api_key)
     app.add_middleware(
         BodySizeLimitMiddleware,
         max_bytes=settings.body_size_limit_mib * 1024 * 1024,
+    )
+    _rate_limiter = SlidingWindowRateLimiter()
+    app.add_middleware(
+        RateLimitMiddleware,
+        rate_limiter=_rate_limiter,
+        max_requests=100,
+        window_seconds=60.0,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -238,17 +329,40 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
 
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request, exc):
+        import traceback
+        logger = logging.getLogger("backend.api")
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        return Response(
+            content=json.dumps({"detail": "Internal server error"}),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    from fastapi.exceptions import RequestValidationError
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request, exc):
+        return Response(
+            content=json.dumps({"detail": "Validation error", "errors": [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]}),
+            status_code=422,
+            media_type="application/json",
+        )
+
     @app.get("/health/live")
     async def health_live() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.get("/health/ready")
     async def health_ready() -> dict[str, str]:
-        return {"status": "ok", "version": "5.0.0"}
+        from backend.core.instance_id import get_instance_id
+        return {"status": "ok", "version": "5.0.0", "instance_id": get_instance_id()}
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "version": "5.0.0"}
+        from backend.core.instance_id import get_instance_id
+        return {"status": "ok", "version": "5.0.0", "instance_id": get_instance_id()}
 
     @app.get("/metrics")
     async def metrics() -> Response:

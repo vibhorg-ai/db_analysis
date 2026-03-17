@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
+import { useAppContext } from "../context/AppContext.tsx";
 
 const HISTORY_KEY = "sandbox_query_history";
 const MAX_HISTORY = 20;
@@ -25,12 +26,26 @@ function saveHistory(entries: HistoryEntry[]) {
 }
 
 export default function SandboxPage() {
+  const { connections, activeConnectionId } = useAppContext();
+  const [connectionId, setConnectionId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [rowCount, setRowCount] = useState<number | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+
+  const effectiveConnectionId = connectionId ?? activeConnectionId ?? connections[0]?.id ?? null;
+
+  useEffect(() => {
+    if (connections.length === 1 && !connectionId) {
+      setConnectionId(connections[0].id);
+    } else if (!connectionId && activeConnectionId) {
+      setConnectionId(activeConnectionId);
+    } else if (!connectionId && connections[0]) {
+      setConnectionId(connections[0].id);
+    }
+  }, [connections, activeConnectionId, connectionId]);
 
   const handleExecute = useCallback(async () => {
     if (!query.trim()) return;
@@ -39,7 +54,7 @@ export default function SandboxPage() {
     setRowCount(null);
     setLoading(true);
     try {
-      const data = await api.sandbox({ query });
+      const data = await api.sandbox({ query, connection_id: effectiveConnectionId ?? undefined });
       if (!data.success && data.error) {
         setError(data.error);
         const entry: HistoryEntry = { query, timestamp: Date.now(), rowCount: 0, success: false };
@@ -59,7 +74,7 @@ export default function SandboxPage() {
     } finally {
       setLoading(false);
     }
-  }, [query, history]);
+  }, [query, history, effectiveConnectionId]);
 
   const loadFromHistory = (entry: HistoryEntry) => {
     setQuery(entry.query);
@@ -78,6 +93,25 @@ export default function SandboxPage() {
         <header className="mb-8">
           <h1 className="text-3xl font-bold text-white tracking-tight">Query Sandbox</h1>
           <p className="mt-1 text-surface-400">Execute read-only queries safely with automatic rollback</p>
+          {connections.length > 0 && (
+            <div className="mt-4">
+              <label htmlFor="sandbox-connection" className="block text-sm font-medium text-surface-400 mb-1">
+                Connection
+              </label>
+              <select
+                id="sandbox-connection"
+                className="input-field w-auto min-w-[200px]"
+                value={effectiveConnectionId ?? ""}
+                onChange={(e) => setConnectionId(e.target.value || null)}
+              >
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </header>
 
         <div className="space-y-6 max-w-5xl">

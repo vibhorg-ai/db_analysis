@@ -1,7 +1,7 @@
 """
 In-memory knowledge graph representing the database ecosystem.
 Node types: table, column, index, query, workload, metric, issue
-Edge types: HAS_COLUMN, HAS_INDEX, FOREIGN_KEY, READS, WRITES, DEPENDS_ON, RELATES_TO
+Edge types: HAS_COLUMN, HAS_INDEX, INDEXES_COLUMN, FOREIGN_KEY, READS, WRITES, DEPENDS_ON, RELATES_TO
 """
 
 from __future__ import annotations
@@ -184,6 +184,11 @@ class KnowledgeGraph:
                         seen.add(idx_id)
                         self.add_node(idx_id, "index", {"columns": idx.get("columns", [])})
                     self.add_edge(table_name, idx_id, "HAS_INDEX")
+                    for col_name in idx.get("columns", []):
+                        if col_name:
+                            col_id = f"{table_name}.{col_name}"
+                            if col_id in self._nodes:
+                                self.add_edge(idx_id, col_id, "INDEXES_COLUMN")
 
             for fk in tbl.get("foreign_keys", []):
                 ref_table = fk.get("target_table") or ""

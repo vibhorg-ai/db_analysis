@@ -24,6 +24,8 @@ class Issue:
 
 
 class IssueHistory:
+    MAX_ISSUES = 5000
+
     def __init__(self) -> None:
         self._issues: list[Issue] = []
         self._lock = threading.Lock()
@@ -50,6 +52,8 @@ class IssueHistory:
         )
         with self._lock:
             self._issues.append(issue)
+            if len(self._issues) > self.MAX_ISSUES:
+                self._issues = self._issues[-self.MAX_ISSUES:]
             return issue
 
     def resolve(self, issue_id: str) -> bool:
@@ -89,11 +93,14 @@ class IssueHistory:
 
 
 _instance: IssueHistory | None = None
+_init_lock = threading.Lock()
 
 
 def get_issue_history() -> IssueHistory:
     """Return singleton IssueHistory instance."""
     global _instance
     if _instance is None:
-        _instance = IssueHistory()
+        with _init_lock:
+            if _instance is None:
+                _instance = IssueHistory()
     return _instance

@@ -4,7 +4,7 @@ import { useAppContext } from "../context/AppContext.tsx";
 import { wsClient, type WSEvent } from "../api/websocket";
 
 export default function DashboardPage() {
-  const { connections, healthMap, activeConnectionId } = useAppContext();
+  const { connections, healthMap, schemaMap, fetchSchemaIfNeeded, activeConnectionId } = useAppContext();
   const [mcpStatus, setMcpStatus] = useState<{ postgres: unknown; couchbase: unknown } | null>(null);
   const [wsEvents, setWsEvents] = useState<WSEvent[]>([]);
 
@@ -19,9 +19,14 @@ export default function DashboardPage() {
     return unsubscribe;
   }, []);
 
+  const effectiveConnId = activeConnectionId ?? connections[0]?.id ?? null;
+  useEffect(() => {
+    if (effectiveConnId) fetchSchemaIfNeeded(effectiveConnId).catch(() => {});
+  }, [effectiveConnId, fetchSchemaIfNeeded]);
+
   const activeHealth = activeConnectionId ? healthMap[activeConnectionId] : Object.values(healthMap)[0];
   const healthScore = activeHealth?.score ?? null;
-  const schemaTablesCount = null;
+  const schemaTablesCount = effectiveConnId ? (schemaMap[effectiveConnId]?.length ?? 0) : 0;
 
   const mcpLabel =
     mcpStatus !== null
@@ -49,7 +54,7 @@ export default function DashboardPage() {
             Active Connections
           </h3>
           <p className="text-2xl font-bold text-white">
-            {connections.length}
+            {connections.filter((c) => c.connected).length}
           </p>
         </div>
         <div className="card">
@@ -57,7 +62,7 @@ export default function DashboardPage() {
             Schema Tables
           </h3>
           <p className="text-2xl font-bold text-white">
-            {schemaTablesCount !== null ? schemaTablesCount : 0}
+            {schemaTablesCount}
           </p>
         </div>
         <div className="card">

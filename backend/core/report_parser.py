@@ -43,6 +43,9 @@ class _TableExtractor(HTMLParser):
         self._meta: dict[str, str] = {}
         self._in_title = False
         self._title_text = ""
+        self._in_li = False
+        self._li_text = ""
+        self._li_has_child_element = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -53,6 +56,12 @@ class _TableExtractor(HTMLParser):
             self._in_heading = True
             self._heading_text = ""
             self._heading_tag = tag
+        elif tag == "li" and not self._in_table:
+            self._in_li = True
+            self._li_text = ""
+            self._li_has_child_element = False
+        elif self._in_li and tag in ("a", "ul", "ol"):
+            self._li_has_child_element = True
         elif tag == "table":
             self._in_table = True
             self._current_table = {"heading": "", "headers": [], "rows": []}
@@ -75,6 +84,11 @@ class _TableExtractor(HTMLParser):
         if tag == "title":
             self._in_title = False
             self._meta["title"] = self._title_text.strip()
+        elif tag == "li" and self._in_li:
+            self._in_li = False
+            text = self._li_text.strip()
+            if text and not self._li_has_child_element and text.endswith(":") and len(text) < 80:
+                self._headings.append(text.rstrip(":"))
         elif tag in ("h1", "h2", "h3", "h4") and self._in_heading:
             self._in_heading = False
             text = self._heading_text.strip()
@@ -103,6 +117,8 @@ class _TableExtractor(HTMLParser):
             self._title_text += data
         if self._in_heading:
             self._heading_text += data
+        if self._in_li:
+            self._li_text += data
         if self._in_cell:
             self._current_cell_text += data
 

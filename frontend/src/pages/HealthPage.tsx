@@ -48,8 +48,8 @@ export default function HealthPage() {
   } = useAppContext();
 
   useEffect(() => {
-    refreshHealthAll();
-    const interval = setInterval(() => refreshHealthAll(), REFRESH_INTERVAL_MS);
+    refreshHealthAll(true);
+    const interval = setInterval(() => refreshHealthAll(true), REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [refreshHealthAll]);
 

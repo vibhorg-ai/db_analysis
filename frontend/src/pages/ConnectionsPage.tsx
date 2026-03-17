@@ -37,7 +37,7 @@ function getEngineBadgeClass(engine: string): string {
 }
 
 export default function ConnectionsPage() {
-  const { connections, refreshConnections, refreshHealthAll } = useAppContext();
+  const { connections, refreshConnections, refreshHealthAll, setActiveConnectionId } = useAppContext();
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -56,10 +56,13 @@ export default function ConnectionsPage() {
       const body: ConnectRequest = { engine: conn.engine, connection_id: conn.id };
       const res = await api.connect(body);
       if (res.success) {
+        const activeId = res.connection_id ?? conn.id;
+        setActiveConnectionId(activeId);
         setFeedback({ type: "success", message: res.message ?? "Connected" });
         clearFeedback();
-        await refreshConnections();
-        refreshHealthAll().catch(() => {});
+        // Force-refresh so stale cache doesn't block the update
+        await refreshConnections(true);
+        refreshHealthAll(true).catch(() => {});
       } else {
         setFeedback({ type: "error", message: cleanErrorMessage(res.message ?? "Connection failed") });
         clearFeedback();
@@ -73,7 +76,7 @@ export default function ConnectionsPage() {
     } finally {
       setConnecting(null);
     }
-  }, [refreshConnections, refreshHealthAll]);
+  }, [refreshConnections, refreshHealthAll, setActiveConnectionId]);
 
   const handleDisconnect = useCallback(async (id: string) => {
     setDisconnecting(id);
@@ -82,14 +85,18 @@ export default function ConnectionsPage() {
       await api.disconnect(id);
       setFeedback({ type: "success", message: "Disconnected" });
       clearFeedback();
-      await refreshConnections();
-      refreshHealthAll().catch(() => {});
+      await refreshConnections(true);
+      refreshHealthAll(true).catch(() => {});
     } catch (err) {
-      setFeedback({
-        type: "error",
-        message: err instanceof Error ? err.message : "Disconnect failed",
-      });
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "detail" in err
+            ? String((err as { detail?: unknown }).detail)
+            : "Disconnect failed";
+      setFeedback({ type: "error", message: msg });
       clearFeedback();
+      await refreshConnections(true);
     } finally {
       setDisconnecting(null);
     }
@@ -271,13 +278,24 @@ export default function ConnectionsPage() {
                   <h3 className="font-semibold text-white">{conn.name}</h3>
                   <span className={getEngineBadgeClass(conn.engine)}>{conn.engine}</span>
                   {conn.default && <span className="ml-2 badge-green">Default</span>}
+                  {conn.connected && <span className="ml-2 bg-green-900/50 text-green-400 px-2 py-0.5 rounded text-xs font-medium">Connected</span>}
                 </div>
               </div>
               <div className="mt-auto flex gap-2 pt-4">
-                <button type="button" onClick={() => handleConnect(conn)} disabled={connecting === conn.id} className="btn-primary flex-1 text-sm py-1.5">
-                  {connecting === conn.id ? "Connecting..." : "Connect"}
+                <button
+                  type="button"
+                  onClick={() => handleConnect(conn)}
+                  disabled={connecting === conn.id || conn.connected}
+                  className="btn-primary flex-1 text-sm py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {connecting === conn.id ? "Connecting..." : conn.connected ? "Connected" : "Connect"}
                 </button>
-                <button type="button" onClick={() => handleDisconnect(conn.id)} disabled={disconnecting === conn.id} className="btn-secondary text-sm py-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleDisconnect(conn.id)}
+                  disabled={disconnecting === conn.id || !conn.connected}
+                  className="btn-secondary text-sm py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   {disconnecting === conn.id ? "..." : "Disconnect"}
                 </button>
               </div>

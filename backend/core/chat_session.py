@@ -84,7 +84,7 @@ class ChatSession:
         self.connection_info = info
         self.touch()
 
-    def build_system_prompt(self, max_tokens: int = 14000) -> str:
+    def build_system_prompt(self, max_tokens: int = 20000) -> str:
         """Assemble all accumulated context into a system prompt."""
         sections: list[str] = []
         sections.append(
@@ -94,33 +94,41 @@ class ChatSession:
             "Be concise, technical, and specific. Use data from the context below.\n\n"
             "FORMATTING RULES (always follow):\n"
             "- Use Markdown in all responses.\n"
-            "- Wrap every SQL query in a fenced code block: ```sql\\n...\\n```\n"
+            "- Wrap every SQL/N1QL query in a fenced code block: ```sql\\n...\\n```\n"
             "- Use **bold** for emphasis, `inline code` for column/table names.\n"
             "- Use numbered lists (1. 2. 3.) for sequential steps.\n"
             "- Use bullet lists (- item) for non-sequential items.\n"
             "- Use ## headers to separate major sections.\n"
-            "- Never output raw SQL outside of a fenced code block.\n\n"
+            "- Never output raw SQL/N1QL outside of a fenced code block.\n\n"
+            "ENGINE-SPECIFIC QUERY RULES (critical):\n"
+            "- Check the Active Connection section below to determine the engine (postgres or couchbase).\n"
+            "- For PostgreSQL: write standard SQL. Use double quotes for identifiers if needed.\n"
+            "- For Couchbase: write N1QL queries. Use backtick ` for bucket/scope/collection names. "
+            "Do NOT use PostgreSQL-specific syntax (pg_stat_*, information_schema, etc.) against Couchbase.\n"
+            "- NEVER mix query languages. If connected to Couchbase, all queries MUST be valid N1QL.\n\n"
             "QUERY RULES (mandatory):\n"
-            "- NEVER suggest generic or placeholder queries. Every query MUST use actual table names, column names, and schemas from the context above.\n"
+            "- NEVER suggest generic or placeholder queries. Every query MUST use actual table/bucket names, column/field names, and schemas from the context above.\n"
             "- If no schema context is loaded, tell the user to connect a database first before you can provide specific queries.\n"
-            "- Reference specific tables by their actual names (e.g., arbor.cmf_package, not 'your_table').\n"
+            "- Reference specific tables/buckets by their actual names (e.g., arbor.cmf_package for Postgres, `beer-sample` for Couchbase).\n"
             "- When providing optimization advice, reference the actual indexes, constraints, and columns from the schema.\n"
             "- If the user asks about performance but no health metrics are available, suggest connecting a database and running a health check first."
         )
 
         if self.connection_info:
             info = self.connection_info
+            engine = info.get("engine", "unknown")
             safe_info = {k: v for k, v in info.items() if k not in ("password", "dsn", "connector")}
-            sections.append(f"\n## Active Connection\n{json.dumps(safe_info, default=str)}")
+            sections.append(
+                f"\n## Active Connection\n"
+                f"**ENGINE: {engine.upper()}** — ALL queries MUST be valid {engine.upper()} syntax.\n"
+                f"{json.dumps(safe_info, default=str)}"
+            )
 
         if self.schema_context:
             sections.append(f"\n## Database Schema\n{self.schema_context}")
 
         if self.health_context:
             sections.append(f"\n## Health Metrics\n{self.health_context}")
-
-        for report in self.reports:
-            sections.append(f"\n## Report: {report['filename']}\n{report['content']}")
 
         if len(self.reports) >= 2:
             groups = self._detect_report_groups()
@@ -134,6 +142,16 @@ class ChatSession:
                 for group_name, filenames in groups.items():
                     comparison_lines.append(f"\nGroup '{group_name}': {', '.join(filenames)}")
                 sections.append("\n".join(comparison_lines))
+
+        per_report_limit = MAX_REPORT_CONTEXT_CHARS
+        if len(self.reports) >= 2:
+            per_report_limit = MAX_REPORT_CONTEXT_CHARS // len(self.reports)
+
+        for report in self.reports:
+            content = report["content"]
+            if len(content) > per_report_limit:
+                content = content[:per_report_limit] + "\n...(report truncated for multi-report context)"
+            sections.append(f"\n## Report: {report['filename']}\n{content}")
 
         if self.analysis_results:
             latest = self.analysis_results[-3:]
@@ -188,6 +206,8 @@ class ChatSession:
 class ChatSessionStore:
     """Thread-safe in-memory store for chat sessions with TTL cleanup."""
 
+    MAX_SESSIONS = 500
+
     def __init__(self) -> None:
         self._sessions: dict[str, ChatSession] = {}
         self._lock = threading.Lock()
@@ -200,6 +220,10 @@ class ChatSessionStore:
                     session.touch()
                     return session
                 del self._sessions[session_id]
+
+            if len(self._sessions) >= self.MAX_SESSIONS:
+                oldest_id = min(self._sessions, key=lambda k: self._sessions[k].last_active)
+                del self._sessions[oldest_id]
 
             session = ChatSession(session_id=session_id or str(uuid.uuid4()))
             self._sessions[session.session_id] = session
