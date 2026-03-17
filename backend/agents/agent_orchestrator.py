@@ -1,10 +1,11 @@
 """
 Coordinates which agents run for which request type.
 
-AMAIZ sessions do NOT support concurrent requests — a second call to the same
-session returns 409 "session is in use".  Therefore each agent in a parallel
-batch receives its own LLMRouter (and hence its own AMAIZ session).
-Sequential stages can safely share one.
+Every agent (parallel or sequential) receives its own LLMRouter and hence
+its own AMAIZ session.  This prevents: (a) 409 "session is in use" contention
+in parallel batches, (b) AMAIZ conversation-history accumulation across
+sequential agents, (c) cancelled sessions from timed-out agents poisoning
+the next agent.
 """
 
 from __future__ import annotations
@@ -78,12 +79,17 @@ class AgentOrchestrator:
         timing: dict[str, float] = {}
         batches = self._normalize_to_batches(stages_or_batches)
 
+        # Every agent gets its own LLMRouter (and hence its own AMAIZ session).
+        # This prevents: (a) 409 contention in parallel batches, (b) conversation
+        # history accumulating across sequential agents on a shared session,
+        # (c) cancelled-session state from a timed-out agent poisoning the next one.
         for batch in batches:
             if len(batch) == 1:
                 stage_name = batch[0]
                 start = time.perf_counter()
                 try:
-                    agent = self._agent_router.get_agent(stage_name, self._llm_router)
+                    llm = LLMRouter()
+                    agent = self._agent_router.get_agent(stage_name, llm)
                     result = await asyncio.wait_for(agent.run(context), timeout=timeout)
                     context[stage_name] = result
                 except asyncio.TimeoutError:
@@ -95,8 +101,6 @@ class AgentOrchestrator:
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 timing[stage_name] = elapsed_ms
             else:
-                # Parallel batch: each agent gets its own LLMRouter to avoid
-                # AMAIZ 409 "session is in use" contention.
                 async def run_stage(stage_name: str, llm: LLMRouter) -> tuple[str, dict, float]:
                     t0 = time.perf_counter()
                     try:

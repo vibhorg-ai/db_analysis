@@ -464,7 +464,9 @@ export default function ChatMessageRenderer({
       ),
       pre: ({ children }) => <>{children}</>,
       code: ({ className, children }) => {
-        const codeStr = String(children).replace(/\n$/, "");
+        const codeStr = String(children ?? "").replace(/\n$/, "");
+        if (!codeStr.trim()) return null;
+
         const langMatch = /language-(\w+)/.exec(className || "");
         const language = langMatch?.[1];
 
