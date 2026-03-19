@@ -1,0 +1,19 @@
+# Copy to db_connections.yaml and fill in your values. Do NOT commit db_connections.yaml.
+# In Docker: mount your real file at /app/db_connections.yaml.
+connections:
+  - name: "PostgreSQL - mydb"
+    engine: postgres
+    default: true
+    host: "localhost"
+    port: 5432
+    database: "mydb"
+    user: "myuser"
+    password: "mypassword"
+
+  - name: "Couchbase - mybucket"
+    engine: couchbase
+    default: false
+    connection_string: "couchbase://localhost"
+    bucket: "mybucket"
+    username: "admin"
+    password: "password"

@@ -1,0 +1,13 @@
+{
+  "title": "PipelineAgentResponse",
+  "required": [
+    "message"
+  ],
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string",
+      "description": "The agent analysis response in structured markdown format"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+# DB Analyzer AI v7 — deployment_clean: Traefik (HTTPS) + Backend
+#
+# Usage (from v7/deployment_clean):
+#   docker build -t db-analyzer:latest .
+#   docker compose up -d
+#
+# Ports: 9080 (HTTP), 9443 (HTTPS), 8004 (backend direct)
+
+name: db-analyzer
+
+services:
+  traefik:
+    image: traefik:v2.11
+    restart: unless-stopped
+    ports:
+      - "9080:80"
+      - "9443:443"
+    volumes:
+      - ./docker/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./docker/traefik/certs:/certs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - backend-net
+
+  backend:
+    image: db-analyzer:latest
+    pull_policy: never
+    container_name: db-analyzer-system
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./data:/app/data
+      - ./memory:/app/memory
+      - ./reports:/app/reports
+      - ./db_connections.yaml:/app/db_connections.yaml:ro
+    labels:
+      - "traefik.enable=true"
+      # HTTPS router
+      - "traefik.http.routers.backend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.backend.rule=Host(`db-analyzer`)"
+      - "traefik.http.routers.backend.entrypoints=websecure"
+      - "traefik.http.routers.backend.tls=true"
+      # Backend service port
+      - "traefik.http.services.backend.loadbalancer.server.port=8004"
+    networks:
+      - backend-net
+
+networks:
+  backend-net:
+    driver: bridge

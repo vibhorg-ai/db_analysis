@@ -1,0 +1,44 @@
+# Secrets and local env — never commit
+.env
+.env.*
+!.env.template
+
+# DB connection definitions with real credentials
+db_connections.yaml
+!db_connections.example.yaml
+
+# Runtime / local state (Compose mounts these; keep out of Git)
+data/
+memory/
+reports/
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+*.cover
+
+# IDE / OS
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+Thumbs.db
+
+# TLS material under traefik/certs/ is also covered by docker/traefik/certs/.gitignore

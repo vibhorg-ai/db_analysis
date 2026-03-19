@@ -1,0 +1,26 @@
+# Core (required for backend API)
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic>=2.0
+pydantic-settings>=2.0
+pyyaml>=6.0.1
+setuptools>=65.0.0,<81.0.0
+
+# AMAIZ (from corporate Nexus; required if using AMAIZ flows)
+amaiz-sdk==0.10.0
+amaiz-framework-sdk==0.10.4
+
+# Database connectors
+asyncpg==0.29.0
+# Couchbase: use one of the following if you need Couchbase connector:
+#   - From PyPI (public):  couchbase>=4.0,<5
+#   - From Nexus (if available):  acouchbase==3.2.0  (legacy async-only package)
+# acouchbase==3.2.0
+couchbase>=4.0,<5
+
+# Multipart form support (required for chat file upload)
+python-multipart>=0.0.6
+
+# Auth (required for Keycloak mode)
+python-jose[cryptography]>=3.4.0
+httpx>=0.25.1,<0.26.0

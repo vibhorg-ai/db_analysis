@@ -1,0 +1,6 @@
+# Generated certificate and key files — do not commit to production repos
+*.pem
+*.key
+*.csr
+*.srl
+server.cnf

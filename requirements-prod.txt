@@ -1,0 +1,25 @@
+# DB Analyzer AI v7 — Production dependencies only
+# Keep version ranges aligned with requirements.txt to avoid "works in dev, fails in prod".
+
+# Core
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic>=2.0
+pydantic-settings==2.0
+pyyaml==6.0
+
+# Database connectors
+asyncpg==0.29.0
+# Required for Couchbase connector. Omit only if you do not use Couchbase.
+acouchbase==3.2.0
+
+# Multipart form support (required for chat file upload)
+python-multipart>=0.0.6
+
+# AMAIZ SDKs (required — app imports at startup)
+amaiz_sdk
+amaiz_framework_sdk
+
+# Auth (required for Keycloak mode)
+python-jose[cryptography]>=3.4.0
+httpx==0.25.0

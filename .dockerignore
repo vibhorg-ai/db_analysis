@@ -1,0 +1,60 @@
+# ── Frontend (not part of backend image) ──
+frontend/
+
+# ── Tests ──
+tests/
+
+# ── Environment / secrets ──
+.env
+.env.*
+*.env
+*.env.local
+
+# ── DB connections with credentials ──
+db_connections.yaml
+
+# ── Python build artifacts ──
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+build/
+dist/
+
+# ── Pytest ──
+.pytest_cache/
+coverage/
+htmlcov/
+
+# ── Runtime data (mounted as volumes in production) ──
+data/
+memory/
+reports/
+logs/
+*.log
+
+# ── Git ──
+.git/
+.gitignore
+
+# ── AMAIZ reference docs (not used at runtime) ──
+prompts/amaiz/
+
+# ── Task / docs / plans ──
+tasks/
+docs/
+
+# ── Editor / OS ──
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+Thumbs.db
+
+# ── Docker (compose, Dockerfile, Traefik, certs — separate from backend image) ──
+docker/
+.dockerignore

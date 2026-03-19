@@ -1,0 +1,14 @@
+{
+  "name": "db-analyzer-v7-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright E2E tests for DB Analyzer v7",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
