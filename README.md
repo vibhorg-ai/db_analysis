@@ -1,6 +1,6 @@
 # DB Analyzer AI v7
 
-Enterprise database intelligence platform with 12 AI agents, real-time monitoring, knowledge graph, time-travel analytics, and a modern React UI.
+Enterprise database intelligence platform with 8 AI agents, real-time monitoring, knowledge graph, time-travel analytics, and a modern React UI.
 
 ## Architecture
 
