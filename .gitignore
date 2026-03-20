@@ -52,3 +52,6 @@ Thumbs.db
 # Editor
 .idea/
 .vscode/
+
+# Nested Git repo: deployment_clean is published separately to corp Git (optima-core/genai/db-analyzer)
+deployment_clean/.git/
